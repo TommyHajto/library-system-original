@@ -1,0 +1,11 @@
+Terminal1:
+node server.js
+Terminal2:
+cd client
+npm start
+
+Login: bibliotekarz1@biblioteka.pl
+Hasło: password123
+
+login: test@example.com
+haslo: haslo12345

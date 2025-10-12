@@ -1,0 +1,139 @@
+-- Tworzenie bazy danych systemu biblioteki
+
+-- Tabela użytkowników (czytelnicy i pracownicy)
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    phone VARCHAR(20),
+    address TEXT,
+    role VARCHAR(20) CHECK (role IN ('reader', 'librarian', 'admin')) DEFAULT 'reader',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT true
+);
+
+-- Tabela kategorii książek
+CREATE TABLE categories (
+    category_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT
+);
+
+-- Tabela książek
+CREATE TABLE books (
+    book_id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    author VARCHAR(255) NOT NULL,
+    isbn VARCHAR(13) UNIQUE,
+    publisher VARCHAR(255),
+    publication_year INTEGER,
+    category_id INTEGER REFERENCES categories(category_id),
+    description TEXT,
+    total_copies INTEGER DEFAULT 1,
+    available_copies INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabela wypożyczeń
+CREATE TABLE loans (
+    loan_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    book_id INTEGER REFERENCES books(book_id) ON DELETE CASCADE,
+    librarian_id INTEGER REFERENCES users(user_id),
+    loan_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    due_date TIMESTAMP NOT NULL,
+    return_date TIMESTAMP,
+    extended BOOLEAN DEFAULT false,
+    status VARCHAR(20) CHECK (status IN ('active', 'returned', 'overdue')) DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabela rezerwacji
+CREATE TABLE reservations (
+    reservation_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    book_id INTEGER REFERENCES books(book_id) ON DELETE CASCADE,
+    reservation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expiry_date TIMESTAMP NOT NULL,
+    status VARCHAR(20) CHECK (status IN ('pending', 'fulfilled', 'cancelled', 'expired')) DEFAULT 'pending',
+    notified BOOLEAN DEFAULT false
+);
+
+-- Tabela wniosków o przedłużenie
+CREATE TABLE extension_requests (
+    request_id SERIAL PRIMARY KEY,
+    loan_id INTEGER REFERENCES loans(loan_id) ON DELETE CASCADE,
+    request_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) CHECK (status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
+    processed_by INTEGER REFERENCES users(user_id),
+    processed_at TIMESTAMP,
+    new_due_date TIMESTAMP
+);
+
+-- Tabela powiadomień email
+CREATE TABLE email_notifications (
+    notification_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    loan_id INTEGER REFERENCES loans(loan_id),
+    type VARCHAR(50) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    sent_at TIMESTAMP,
+    status VARCHAR(20) CHECK (status IN ('pending', 'sent', 'failed')) DEFAULT 'pending'
+);
+
+-- Indeksy dla optymalizacji zapytań
+CREATE INDEX idx_books_title ON books(title);
+CREATE INDEX idx_books_author ON books(author);
+CREATE INDEX idx_books_isbn ON books(isbn);
+CREATE INDEX idx_books_category ON books(category_id);
+CREATE INDEX idx_loans_user ON loans(user_id);
+CREATE INDEX idx_loans_book ON loans(book_id);
+CREATE INDEX idx_loans_status ON loans(status);
+CREATE INDEX idx_reservations_user ON reservations(user_id);
+CREATE INDEX idx_reservations_status ON reservations(status);
+
+-- Funkcja automatycznej aktualizacji updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Triggery dla updated_at
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_books_updated_at BEFORE UPDATE ON books
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Dane testowe - kategorie
+INSERT INTO categories (name, description) VALUES
+('Fantastyka', 'Książki fantasy i science fiction'),
+('Kryminał', 'Powieści kryminalne i detektywistyczne'),
+('Romans', 'Literatura romantyczna'),
+('Popularnonaukowa', 'Książki popularnonaukowe'),
+('Historia', 'Literatura historyczna'),
+('Biografia', 'Biografie i autobiografie');
+
+-- Dane testowe - administrator
+INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES
+('admin@biblioteka.pl', '$2b$10$YourHashedPasswordHere', 'Admin', 'System', 'admin');
+
+-- Dane testowe - bibliotekarz
+INSERT INTO users (email, password_hash, first_name, last_name, role, phone) VALUES
+('bibliotekarz@biblioteka.pl', '$2b$10$YourHashedPasswordHere', 'Jan', 'Kowalski', 'librarian', '123456789');
+
+-- Dane testowe - książki
+INSERT INTO books (title, author, isbn, publisher, publication_year, category_id, description, total_copies, available_copies) VALUES
+('Władca Pierścieni', 'J.R.R. Tolkien', '9788308038281', 'Amber', 2001, 1, 'Epicka saga fantasy', 3, 3),
+('Hobbit', 'J.R.R. Tolkien', '9788308049389', 'Amber', 2012, 1, 'Przygodowa opowieść', 2, 2),
+('Wiedźmin: Ostatnie życzenie', 'Andrzej Sapkowski', '9788375780635', 'SuperNowa', 2014, 1, 'Zbiór opowiadań o wiedźminie', 4, 4),
+('Zbrodnia i kara', 'Fiodor Dostojewski', '9788324047390', 'Znak', 2015, 2, 'Klasyka literatury rosyjskiej', 2, 2),
+('Sapiens', 'Yuval Noah Harari', '9788324035304', 'Literackie', 2017, 4, 'Od zwierząt do bogów', 5, 5);
