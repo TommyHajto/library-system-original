@@ -1,70 +1,299 @@
-# Getting Started with Create React App
+# System Biblioteki 📚
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+System zarządzania biblioteką z wykorzystaniem metodyki Scrum i wzorców projektowych.
 
-## Available Scripts
+## 📋 Autorzy
 
-In the project directory, you can run:
+- Joanna Krekora
+- Gabriela Czajkowska
+- Oliwia Turalska
+- Łukasz Olesik
+- Tomasz Rokoszyński
+- Agnieszka Michałowska
 
-### `npm start`
+## 🎯 Opis Projektu
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+System wspiera obsługę biblioteki, umożliwiając:
+- Zarządzanie zbiorami książek
+- Obsługę kont czytelników
+- Proces wypożyczeń i zwrotów
+- Rezerwacje książek online
+- Automatyczne powiadomienia email
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## 🏗️ Architektura
 
-### `npm test`
+System wykorzystuje **architekturę trójwarstwową**:
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+1. **Warstwa prezentacji** - React (frontend)
+   - Panel Bibliotekarza
+   - Portal Czytelnika
+   
+2. **Warstwa logiki** - Express.js (backend API)
+   
+3. **Warstwa danych** - PostgreSQL
 
-### `npm run build`
+## 🎨 Wzorce Projektowe
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Projekt implementuje następujące wzorce:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Wzorce Architektoniczne
+- **MVC (Model-View-Controller)** - Separacja logiki, prezentacji i danych
+- **Warstwowa architektura** - Podział na frontend, backend, baza danych
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### Wzorce Projektowe
+1. **Repository Pattern** - Abstrakcja dostępu do danych
+   - `BookRepository.js`
+   - `UserRepository.js`
+   - `LoanRepository.js`
 
-### `npm run eject`
+2. **Factory Pattern** - Tworzenie różnych typów użytkowników
+   - `UserFactory.js` (Reader, Librarian, Admin)
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+3. **Strategy Pattern** - Różne strategie wyszukiwania
+   - `SearchStrategy.js` (TitleSearch, AuthorSearch, ISBNSearch, FullText)
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+4. **Observer Pattern (Pub/Sub)** - System powiadomień
+   - `NotificationService.js`
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+5. **Singleton Pattern** - Połączenie z bazą danych
+   - `config/database.js`
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+6. **Middleware Pattern** - Przetwarzanie żądań HTTP
+   - `authenticateToken`, `checkRole`
 
-## Learn More
+## 🚀 Instalacja
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+### Wymagania
+- Node.js v18+
+- PostgreSQL v14+
+- npm lub yarn
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### Krok 1: Sklonuj repozytorium
 
-### Code Splitting
+```bash
+git clone https://github.com/TommyHajto/library-system.git
+cd library-system
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### Krok 2: Zainstaluj zależności backendu
 
-### Analyzing the Bundle Size
+```bash
+npm install
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+### Krok 3: Zainstaluj zależności frontendu
 
-### Making a Progressive Web App
+```bash
+cd client
+npm install
+cd ..
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+### Krok 4: Konfiguracja bazy danych
 
-### Advanced Configuration
+1. Utwórz bazę danych PostgreSQL:
+```sql
+CREATE DATABASE library_db;
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+2. Zaimportuj schemat (plik w `database/schema.sql`):
+```bash
+psql -U postgres -d library_db -f database/schema.sql
+```
 
-### Deployment
+### Krok 5: Konfiguracja zmiennych środowiskowych
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+1. Skopiuj plik przykładowy:
+```bash
+cp .env.example .env
+```
 
-### `npm run build` fails to minify
+2. Edytuj `.env` i uzupełnij dane:
+```env
+DB_PASSWORD=twoje_haslo_do_bazy
+JWT_SECRET=bardzo-tajny-klucz-minimum-32-znaki
+EMAIL_USER=twoj-email@gmail.com
+EMAIL_PASS=haslo-aplikacji-gmail
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+### Krok 6: Uruchom aplikację
+
+**Development mode:**
+```bash
+# Terminal 1 - Backend
+npm run dev
+
+# Terminal 2 - Frontend
+cd client
+npm start
+```
+
+**Production mode:**
+```bash
+# Build frontendu
+cd client
+npm run build
+cd ..
+
+# Uruchom backend
+npm start
+```
+
+## 🧪 Testowanie
+
+### Uruchom wszystkie testy
+```bash
+npm test
+```
+
+### Uruchom testy z pokryciem kodu
+```bash
+npm test -- --coverage
+```
+
+### Uruchom testy w trybie watch
+```bash
+npm run test:watch
+```
+
+## 📡 API Endpoints
+
+### Autoryzacja
+- `POST /api/auth/register` - Rejestracja nowego użytkownika
+- `POST /api/auth/login` - Logowanie
+
+### Książki
+- `GET /api/books` - Lista wszystkich książek
+- `GET /api/books/:id` - Szczegóły książki
+- `GET /api/books/search?query=...` - Wyszukiwanie książek
+- `POST /api/books` - Dodaj książkę (librarian/admin)
+- `PUT /api/books/:id` - Edytuj książkę (librarian/admin)
+- `DELETE /api/books/:id` - Usuń książkę (admin)
+
+### Wypożyczenia
+- `GET /api/loans/active` - Aktywne wypożyczenia (librarian/admin)
+- `GET /api/loans/user/:userId` - Historia wypożyczeń użytkownika
+- `POST /api/loans` - Utwórz wypożyczenie (librarian/admin)
+- `PUT /api/loans/:id/return` - Zwrot książki (librarian/admin)
+- `POST /api/loans/:id/extend` - Przedłużenie terminu
+
+### Rezerwacje
+- `GET /api/reservations/user` - Rezerwacje użytkownika
+- `POST /api/reservations` - Utwórz rezerwację
+
+### Użytkownicy
+- `GET /api/users/:id` - Dane użytkownika
+- `PUT /api/users/:id` - Edycja danych użytkownika
+
+### Kategorie
+- `GET /api/categories` - Lista kategorii książek
+
+## 👥 Role Użytkowników
+
+### Reader (Czytelnik)
+- Przeglądanie katalogu książek
+- Rezerwowanie książek
+- Podgląd historii wypożyczeń
+- Edycja własnego profilu
+
+### Librarian (Bibliotekarz)
+- Wszystkie uprawnienia czytelnika
+- Zarządzanie książkami (dodawanie, edycja)
+- Rejestrowanie wypożyczeń i zwrotów
+- Przeglądanie wszystkich wypożyczeń
+
+### Admin (Administrator)
+- Wszystkie uprawnienia bibliotekarza
+- Usuwanie książek
+- Zarządzanie użytkownikami
+- Zmiana ról użytkowników
+- Wysyłanie powiadomień
+
+## 🔐 Bezpieczeństwo
+
+- Hasła hashowane z użyciem **bcrypt** (10 rounds)
+- Autoryzacja oparta na **JWT tokens** (ważność 24h)
+- **CORS** dla bezpiecznej komunikacji frontend-backend
+- Walidacja danych wejściowych
+- Ochrona wrażliwych endpointów middleware'em autoryzacji
+
+## 📊 Metodyka Scrum
+
+Projekt został zrealizowany w 3 sprintach po 2 tygodnie:
+
+### Sprint 1
+- Projekt interfejsu użytkownika
+- Struktura bazy danych
+- Podstawowa architektura
+
+### Sprint 2
+- Implementacja rejestracji i logowania
+- Zarządzanie książkami
+- Panel bibliotekarza
+
+### Sprint 3
+- Obsługa wypożyczeń i zwrotów
+- System rezerwacji
+- Automatyczne powiadomienia email
+
+## 🛠️ Technologie
+
+### Backend
+- Node.js v18+
+- Express.js v4.18
+- PostgreSQL v14+
+- JWT (jsonwebtoken)
+- bcrypt v5.1
+- nodemailer v6.9
+- node-schedule v2.1
+
+### Frontend
+- React v18+
+- React Router v6
+- Tailwind CSS v3
+- Lucide React (ikony)
+
+### Testing
+- Jest v29
+- Supertest v6
+
+## 📝 Struktura Projektu
+
+```
+library-system/
+├── client/                 # Frontend React
+│   ├── src/
+│   │   ├── App.js
+│   │   ├── LibrarianPanel.js
+│   │   └── ReaderPortal.js
+│   └── package.json
+├── config/                 # Konfiguracja
+│   └── database.js        # Singleton - połączenie DB
+├── repositories/          # Repository Pattern
+│   ├── BookRepository.js
+│   ├── UserRepository.js
+│   └── LoanRepository.js
+├── factories/             # Factory Pattern
+│   └── UserFactory.js
+├── strategies/            # Strategy Pattern
+│   └── SearchStrategy.js
+├── observers/             # Observer Pattern
+│   └── NotificationService.js
+├── tests/                 # Testy
+│   ├── auth.test.js
+│   ├── books.test.js
+│   └── loans.test.js
+├── database/              # Skrypty SQL
+│   └── schema.sql
+├── server.js              # Główny plik serwera
+├── package.json
+├── .env.example
+├── .gitignore
+└── README.md
+```
+
+## 📞 Kontakt
+
+Zespół projektowy - Informatyka, Semestr 5
+
+Prowadzący: Marcin Kacprowicz

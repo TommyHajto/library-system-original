@@ -1,38 +1,34 @@
-// server.js - Backend API dla systemu biblioteki
+// server.js - Backend API dla systemu biblioteki z wzorcami projektowymi
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { Pool } = require('pg');
-const nodemailer = require('nodemailer');
 require('dotenv').config();
+
+// Singleton Pattern - Database
+const { pool } = require('./config/database');
+
+// Repository Pattern
+const BookRepository = require('./repositories/BookRepository');
+const UserRepository = require('./repositories/UserRepository');
+const LoanRepository = require('./repositories/LoanRepository');
+
+// Factory Pattern
+const { UserFactory } = require('./factories/UserFactory');
+
+// Strategy Pattern
+const { BookSearchContext, SearchStrategyFactory } = require('./strategies/SearchStrategy');
+
+// Observer Pattern
+const NotificationService = require('./observers/NotificationService');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
-// Konfiguracja PostgreSQL
-const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'library_db',
-  password: '',
-  port: 5432,
-});
-
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Konfiguracja email (nodemailer)
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
 
 // Middleware autoryzacji
 const authenticateToken = (req, res, next) => {
@@ -60,31 +56,28 @@ const checkRole = (...roles) => {
 
 // ========== AUTORYZACJA (F1, F2) ==========
 
-// F1: Rejestracja użytkownika
+// F1: Rejestracja użytkownika - używa Factory Pattern
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, firstName, lastName, phone, address } = req.body;
 
-    const existingUser = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
-      [email]
-    );
-
-    if (existingUser.rows.length > 0) {
+    const existingUser = await UserRepository.findByEmail(email);
+    if (existingUser) {
       return res.status(400).json({ error: 'Email już istnieje' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash, first_name, last_name, phone, address) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING user_id, email, first_name, last_name, role`,
-      [email, hashedPassword, firstName, lastName, phone, address]
+    // Factory Pattern - tworzenie użytkownika
+    const userData = await UserFactory.createUser(
+      { email, firstName, lastName, phone, address, role: 'reader' },
+      password
     );
+
+    // Repository Pattern - zapis do bazy
+    const user = await UserRepository.create(userData);
 
     res.status(201).json({
       message: 'Użytkownik zarejestrowany',
-      user: result.rows[0]
+      user: user
     });
   } catch (error) {
     console.error('Błąd rejestracji:', error);
@@ -97,18 +90,12 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true',
-      [email]
-    );
-
-    if (result.rows.length === 0) {
+    const user = await UserRepository.findByEmail(email);
+    if (!user || !user.is_active) {
       return res.status(401).json({ error: 'Nieprawidłowe dane logowania' });
     }
 
-    const user = result.rows[0];
     const validPassword = await bcrypt.compare(password, user.password_hash);
-
     if (!validPassword) {
       return res.status(401).json({ error: 'Nieprawidłowe dane logowania' });
     }
@@ -119,6 +106,9 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Factory Pattern - tworzenie instancji odpowiedniego typu użytkownika
+    const userInstance = UserFactory.createUserInstance(user);
+
     res.json({
       token,
       user: {
@@ -126,7 +116,8 @@ app.post('/api/auth/login', async (req, res) => {
         email: user.email,
         firstName: user.first_name,
         lastName: user.last_name,
-        role: user.role
+        role: user.role,
+        permissions: userInstance.getPermissions()
       }
     });
   } catch (error) {
@@ -135,128 +126,81 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ========== KSIĄŻKI ==========
+// ========== KSIĄŻKI - używa Repository i Strategy Pattern ==========
 
-// F3: Wyszukiwanie książek
+// F3: Wyszukiwanie książek - Strategy Pattern
 app.get('/api/books/search', async (req, res) => {
   try {
-    const { query, category, author } = req.query;
+    const { query, category, author, searchType = 'fulltext' } = req.query;
     
-    let sql = `
-      SELECT b.*, c.name as category_name 
-      FROM books b
-      LEFT JOIN categories c ON b.category_id = c.category_id
-      WHERE 1=1
-    `;
-    const params = [];
-    let paramIndex = 1;
-
-    if (query) {
-      sql += ` AND (LOWER(b.title) LIKE $${paramIndex} OR LOWER(b.author) LIKE $${paramIndex} OR b.isbn LIKE $${paramIndex})`;
-      params.push(`%${query.toLowerCase()}%`);
-      paramIndex++;
+    if (searchType && query) {
+      // Strategy Pattern - wybór strategii wyszukiwania
+      const strategy = SearchStrategyFactory.getStrategy(searchType);
+      const context = new BookSearchContext(strategy);
+      const results = await context.executeSearch(query);
+      return res.json(results);
     }
 
-    if (category) {
-      sql += ` AND b.category_id = $${paramIndex}`;
-      params.push(category);
-      paramIndex++;
-    }
-
-    if (author) {
-      sql += ` AND LOWER(b.author) LIKE $${paramIndex}`;
-      params.push(`%${author.toLowerCase()}%`);
-      paramIndex++;
-    }
-
-    sql += ' ORDER BY b.title';
-
-    const result = await pool.query(sql, params);
-    res.json(result.rows);
+    // Fallback do repository pattern dla złożonych wyszukiwań
+    const results = await BookRepository.search({ query, category, author });
+    res.json(results);
   } catch (error) {
     console.error('Błąd wyszukiwania:', error);
     res.status(500).json({ error: 'Błąd serwera' });
   }
 });
 
-// Pobierz wszystkie książki
+// Pobierz wszystkie książki - Repository Pattern
 app.get('/api/books', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT b.*, c.name as category_name 
-      FROM books b
-      LEFT JOIN categories c ON b.category_id = c.category_id
-      ORDER BY b.title
-    `);
-    res.json(result.rows);
+    const books = await BookRepository.findAll();
+    res.json(books);
   } catch (error) {
     console.error('Błąd pobierania książek:', error);
     res.status(500).json({ error: 'Błąd serwera' });
   }
 });
 
-// Pobierz szczegóły książki
+// Pobierz szczegóły książki - Repository Pattern
 app.get('/api/books/:id', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT b.*, c.name as category_name 
-      FROM books b
-      LEFT JOIN categories c ON b.category_id = c.category_id
-      WHERE b.book_id = $1
-    `, [req.params.id]);
-
-    if (result.rows.length === 0) {
+    const book = await BookRepository.findById(req.params.id);
+    if (!book) {
       return res.status(404).json({ error: 'Książka nie znaleziona' });
     }
-
-    res.json(result.rows[0]);
+    res.json(book);
   } catch (error) {
     console.error('Błąd pobierania książki:', error);
     res.status(500).json({ error: 'Błąd serwera' });
   }
 });
 
-// Dodaj książkę (tylko bibliotekarz/admin)
+// Dodaj książkę - Repository Pattern
 app.post('/api/books', authenticateToken, checkRole('librarian', 'admin'), async (req, res) => {
   try {
-    const { title, author, isbn, publisher, publicationYear, categoryId, description, totalCopies } = req.body;
-
-    const result = await pool.query(
-      `INSERT INTO books (title, author, isbn, publisher, publication_year, category_id, description, total_copies, available_copies) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
-      [title, author, isbn, publisher, publicationYear, categoryId, description, totalCopies]
-    );
-
-    res.status(201).json(result.rows[0]);
+    const book = await BookRepository.create(req.body);
+    res.status(201).json(book);
   } catch (error) {
     console.error('Błąd dodawania książki:', error);
     res.status(500).json({ error: 'Błąd serwera' });
   }
 });
 
-// Edytuj książkę (tylko bibliotekarz/admin)
+// Edytuj książkę - Repository Pattern
 app.put('/api/books/:id', authenticateToken, checkRole('librarian', 'admin'), async (req, res) => {
   try {
-    const { title, author, isbn, publisher, publicationYear, categoryId, description, totalCopies } = req.body;
-
-    const result = await pool.query(
-      `UPDATE books SET title = $1, author = $2, isbn = $3, publisher = $4, 
-       publication_year = $5, category_id = $6, description = $7, total_copies = $8
-       WHERE book_id = $9 RETURNING *`,
-      [title, author, isbn, publisher, publicationYear, categoryId, description, totalCopies, req.params.id]
-    );
-
-    res.json(result.rows[0]);
+    const book = await BookRepository.update(req.params.id, req.body);
+    res.json(book);
   } catch (error) {
     console.error('Błąd edycji książki:', error);
     res.status(500).json({ error: 'Błąd serwera' });
   }
 });
 
-// Usuń książkę (tylko admin)
+// Usuń książkę - Repository Pattern
 app.delete('/api/books/:id', authenticateToken, checkRole('admin'), async (req, res) => {
   try {
-    await pool.query('DELETE FROM books WHERE book_id = $1', [req.params.id]);
+    await BookRepository.delete(req.params.id);
     res.json({ message: 'Książka usunięta' });
   } catch (error) {
     console.error('Błąd usuwania książki:', error);
@@ -264,9 +208,9 @@ app.delete('/api/books/:id', authenticateToken, checkRole('admin'), async (req, 
   }
 });
 
-// ========== WYPOŻYCZENIA ==========
+// ========== WYPOŻYCZENIA - używa Repository i Observer Pattern ==========
 
-// F4: Wypożycz książkę (tylko bibliotekarz)
+// F4: Wypożycz książkę
 app.post('/api/loans', authenticateToken, checkRole('librarian', 'admin'), async (req, res) => {
   const client = await pool.connect();
   
@@ -276,31 +220,39 @@ app.post('/api/loans', authenticateToken, checkRole('librarian', 'admin'), async
     const { userId, bookId, dueDate } = req.body;
 
     // Sprawdź dostępność
-    const book = await client.query(
-      'SELECT available_copies FROM books WHERE book_id = $1',
-      [bookId]
-    );
-
-    if (book.rows[0].available_copies < 1) {
+    const availableCopies = await BookRepository.checkAvailability(bookId);
+    if (availableCopies < 1) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Książka niedostępna' });
     }
 
     // Utwórz wypożyczenie
-    const loan = await client.query(
-      `INSERT INTO loans (user_id, book_id, librarian_id, due_date) 
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [userId, bookId, req.user.userId, dueDate]
-    );
+    const loan = await LoanRepository.create({
+      userId,
+      bookId,
+      librarianId: req.user.userId,
+      dueDate
+    });
 
     // Zmniejsz dostępność
-    await client.query(
-      'UPDATE books SET available_copies = available_copies - 1 WHERE book_id = $1',
-      [bookId]
-    );
+    await BookRepository.updateAvailability(bookId, -1);
 
     await client.query('COMMIT');
-    res.status(201).json(loan.rows[0]);
+
+    // Observer Pattern - wyślij powiadomienie
+    const user = await UserRepository.findById(userId);
+    const book = await BookRepository.findById(bookId);
+    
+    await NotificationService.sendLoanConfirmation({
+      userId: user.user_id,
+      email: user.email,
+      firstName: user.first_name,
+      title: book.title,
+      loanDate: loan.loan_date,
+      dueDate: loan.due_date
+    });
+
+    res.status(201).json(loan);
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Błąd wypożyczenia:', error);
@@ -317,28 +269,17 @@ app.put('/api/loans/:id/return', authenticateToken, checkRole('librarian', 'admi
   try {
     await client.query('BEGIN');
 
-    const loan = await client.query(
-      'SELECT * FROM loans WHERE loan_id = $1',
-      [req.params.id]
-    );
-
-    if (loan.rows.length === 0) {
+    const loan = await LoanRepository.findById(req.params.id);
+    if (!loan) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Wypożyczenie nie znalezione' });
     }
 
     // Aktualizuj wypożyczenie
-    await client.query(
-      `UPDATE loans SET return_date = CURRENT_TIMESTAMP, status = 'returned' 
-       WHERE loan_id = $1`,
-      [req.params.id]
-    );
+    await LoanRepository.markAsReturned(req.params.id);
 
     // Zwiększ dostępność
-    await client.query(
-      'UPDATE books SET available_copies = available_copies + 1 WHERE book_id = $1',
-      [loan.rows[0].book_id]
-    );
+    await BookRepository.updateAvailability(loan.book_id, 1);
 
     await client.query('COMMIT');
     res.json({ message: 'Książka zwrócona' });
@@ -351,42 +292,26 @@ app.put('/api/loans/:id/return', authenticateToken, checkRole('librarian', 'admi
   }
 });
 
-// F10: Historia wypożyczeń użytkownika
+// F10: Historia wypożyczeń - Repository Pattern
 app.get('/api/loans/user/:userId', authenticateToken, async (req, res) => {
   try {
-    // Użytkownik może zobaczyć tylko swoją historię
     if (req.user.userId !== parseInt(req.params.userId) && !['librarian', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Brak uprawnień' });
     }
 
-    const result = await pool.query(`
-      SELECT l.*, b.title, b.author, b.isbn 
-      FROM loans l
-      JOIN books b ON l.book_id = b.book_id
-      WHERE l.user_id = $1
-      ORDER BY l.loan_date DESC
-    `, [req.params.userId]);
-
-    res.json(result.rows);
+    const loans = await LoanRepository.findByUserId(req.params.userId);
+    res.json(loans);
   } catch (error) {
     console.error('Błąd pobierania historii:', error);
     res.status(500).json({ error: 'Błąd serwera' });
   }
 });
 
-// Wszystkie aktywne wypożyczenia (bibliotekarz)
+// Wszystkie aktywne wypożyczenia
 app.get('/api/loans/active', authenticateToken, checkRole('librarian', 'admin'), async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT l.*, b.title, b.author, u.first_name, u.last_name, u.email
-      FROM loans l
-      JOIN books b ON l.book_id = b.book_id
-      JOIN users u ON l.user_id = u.user_id
-      WHERE l.status = 'active'
-      ORDER BY l.due_date
-    `);
-
-    res.json(result.rows);
+    const loans = await LoanRepository.findActive();
+    res.json(loans);
   } catch (error) {
     console.error('Błąd pobierania wypożyczeń:', error);
     res.status(500).json({ error: 'Błąd serwera' });
@@ -400,7 +325,7 @@ app.post('/api/reservations', authenticateToken, async (req, res) => {
   try {
     const { bookId } = req.body;
     const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + 7); // Rezerwacja na 7 dni
+    expiryDate.setDate(expiryDate.getDate() + 7);
 
     const result = await pool.query(
       `INSERT INTO reservations (user_id, book_id, expiry_date) 
@@ -436,21 +361,18 @@ app.get('/api/reservations/user', authenticateToken, async (req, res) => {
 // F7: Przedłużenie terminu zwrotu
 app.post('/api/loans/:id/extend', authenticateToken, async (req, res) => {
   try {
-    const loan = await pool.query(
-      'SELECT * FROM loans WHERE loan_id = $1 AND user_id = $2',
-      [req.params.id, req.user.userId]
-    );
-
-    if (loan.rows.length === 0) {
+    const loan = await LoanRepository.findById(req.params.id);
+    
+    if (!loan || loan.user_id !== req.user.userId) {
       return res.status(404).json({ error: 'Wypożyczenie nie znalezione' });
     }
 
-    if (loan.rows[0].extended) {
+    if (loan.extended) {
       return res.status(400).json({ error: 'Wypożyczenie już przedłużone' });
     }
 
-    const newDueDate = new Date(loan.rows[0].due_date);
-    newDueDate.setDate(newDueDate.getDate() + 14); // Przedłużenie o 14 dni
+    const newDueDate = new Date(loan.due_date);
+    newDueDate.setDate(newDueDate.getDate() + 14);
 
     await pool.query(
       `INSERT INTO extension_requests (loan_id, new_due_date) 
@@ -465,7 +387,7 @@ app.post('/api/loans/:id/extend', authenticateToken, async (req, res) => {
   }
 });
 
-// ========== UŻYTKOWNICY ==========
+// ========== UŻYTKOWNICY - Repository Pattern ==========
 
 // F6: Edycja danych użytkownika
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
@@ -474,15 +396,8 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Brak uprawnień' });
     }
 
-    const { firstName, lastName, phone, address } = req.body;
-
-    const result = await pool.query(
-      `UPDATE users SET first_name = $1, last_name = $2, phone = $3, address = $4 
-       WHERE user_id = $5 RETURNING user_id, email, first_name, last_name, phone, address, role`,
-      [firstName, lastName, phone, address, req.params.id]
-    );
-
-    res.json(result.rows[0]);
+    const user = await UserRepository.update(req.params.id, req.body);
+    res.json(user);
   } catch (error) {
     console.error('Błąd edycji użytkownika:', error);
     res.status(500).json({ error: 'Błąd serwera' });
@@ -496,16 +411,12 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Brak uprawnień' });
     }
 
-    const result = await pool.query(
-      'SELECT user_id, email, first_name, last_name, phone, address, role, created_at FROM users WHERE user_id = $1',
-      [req.params.id]
-    );
-
-    if (result.rows.length === 0) {
+    const user = await UserRepository.findById(req.params.id);
+    if (!user) {
       return res.status(404).json({ error: 'Użytkownik nie znaleziony' });
     }
 
-    res.json(result.rows[0]);
+    res.json(user);
   } catch (error) {
     console.error('Błąd pobierania użytkownika:', error);
     res.status(500).json({ error: 'Błąd serwera' });
@@ -524,49 +435,28 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
-// F8: Funkcja wysyłania powiadomień email (wywoływana przez cron)
+// F8: Funkcja wysyłania powiadomień email - Observer Pattern
 async function sendDueReminders() {
   try {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const loans = await LoanRepository.findDueSoon(1);
 
-    const loans = await pool.query(`
-      SELECT l.*, u.email, u.first_name, b.title 
-      FROM loans l
-      JOIN users u ON l.user_id = u.user_id
-      JOIN books b ON l.book_id = b.book_id
-      WHERE l.status = 'active' AND DATE(l.due_date) = DATE($1)
-    `, [tomorrow]);
-
-    for (const loan of loans.rows) {
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: loan.email,
-        subject: 'Przypomnienie o zbliżającym się terminie zwrotu',
-        html: `
-          <p>Witaj ${loan.first_name},</p>
-          <p>Przypominamy, że termin zwrotu książki <strong>${loan.title}</strong> upływa jutro.</p>
-          <p>Data zwrotu: ${new Date(loan.due_date).toLocaleDateString('pl-PL')}</p>
-          <p>Prosimy o terminowy zwrot lub przedłużenie wypożyczenia.</p>
-        `
-      };
-
-      await transporter.sendMail(mailOptions);
-      
-      await pool.query(
-        `INSERT INTO email_notifications (user_id, loan_id, type, subject, body, sent_at, status) 
-         VALUES ($1, $2, 'due_reminder', $3, $4, CURRENT_TIMESTAMP, 'sent')`,
-        [loan.user_id, loan.loan_id, mailOptions.subject, mailOptions.html]
-      );
+    for (const loan of loans) {
+      await NotificationService.sendDueReminder({
+        userId: loan.user_id,
+        email: loan.email,
+        firstName: loan.first_name,
+        title: loan.title,
+        dueDate: loan.due_date
+      });
     }
 
-    console.log(`Wysłano ${loans.rows.length} powiadomień`);
+    console.log(`Wysłano ${loans.length} powiadomień`);
   } catch (error) {
     console.error('Błąd wysyłania powiadomień:', error);
   }
 }
 
-// Endpoint do ręcznego wyzwolenia powiadomień (do testów)
+// Endpoint do ręcznego wyzwolenia powiadomień
 app.post('/api/notifications/send-reminders', authenticateToken, checkRole('admin'), async (req, res) => {
   try {
     await sendDueReminders();
@@ -577,10 +467,15 @@ app.post('/api/notifications/send-reminders', authenticateToken, checkRole('admi
 });
 
 // Uruchomienie serwera
-app.listen(PORT, () => {
-  console.log(`Serwer uruchomiony na porcie ${PORT}`);
-  
-  // Harmonogram wysyłania powiadomień (codziennie o 9:00)
-  const schedule = require('node-schedule');
-  schedule.scheduleJob('0 9 * * *', sendDueReminders);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✓ Serwer uruchomiony na porcie ${PORT}`);
+    
+    // Harmonogram wysyłania powiadomień (codziennie o 9:00)
+    const schedule = require('node-schedule');
+    schedule.scheduleJob('0 9 * * *', sendDueReminders);
+    console.log('✓ Harmonogram powiadomień aktywny');
+  });
+}
+
+module.exports = app; // Export dla testów
